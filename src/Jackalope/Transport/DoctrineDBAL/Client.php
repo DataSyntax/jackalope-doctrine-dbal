@@ -6,6 +6,7 @@ use ArrayObject;
 use Closure;
 use DateTime;
 use DateTimeZone;
+use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use DOMDocument;
 use DOMElement;
 use DOMXPath;
@@ -239,7 +240,7 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
                 return null;
             }
 
-            $dom = new DOMDocument('1.0', 'UTF-8');
+            $dom = $this->createDomDocument();
             $dom->loadXML($string);
             $xpath = new DOMXPath($dom);
             $list = $xpath->evaluate($expression);
@@ -346,6 +347,12 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
             throw new RepositoryException("Couldn't create Workspace '$name': ".$e->getMessage(), 0, $e);
         }
 
+        if ($this->getConnection()->getDatabasePlatform() instanceof SQLServerPlatform) {
+            $encoding = 'UTF-16';
+        } else {
+            $encoding = 'UTF-8';
+        }
+
         $this->getConnection()->insert('phpcr_nodes', [
             'path'          => '/',
             'parent'        => '',
@@ -354,7 +361,7 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
             'type'          => 'nt:unstructured',
             'local_name'    => '',
             'namespace'     => '',
-            'props' => '<?xml version="1.0" encoding="UTF-8"?>
+            'props' => '<?xml version="1.0" encoding="'.$encoding.'"?>
 <sv:node xmlns:'.NS::PREFIX_MIX.'="'.NS::NAMESPACE_MIX.'" xmlns:'.NS::PREFIX_NT.'="'.NS::NAMESPACE_NT.'" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:'.NS::PREFIX_JCR.'="'.NS::NAMESPACE_JCR.'" xmlns:'.NS::PREFIX_SV.'="'.NS::NAMESPACE_SV.'" xmlns:rep="internal" />',
             // TODO compute proper value
             'depth'         => 0,
@@ -706,11 +713,11 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
         foreach ($rows as $row) {
             $newPath = str_replace($srcAbsPath, $dstAbsPath, $row['path']);
 
-            $stringDom = new DOMDocument('1.0', 'UTF-8');
+            $stringDom = $this->createDomDocument();
             $stringDom->loadXML($row['props']);
             $numericalDom = null;
             if ($row['numerical_props']) {
-                $numericalDom = new DOMDocument('1.0', 'UTF-8');
+                $numericalDom = $this->createDomDocument();
                 $numericalDom->loadXML($row['numerical_props']);
             }
 
@@ -1053,7 +1060,8 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
     {
         $data = new stdClass();
 
-        $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom = $this->createDomDocument();
+
         $dom->loadXML($xml);
 
         foreach ($dom->getElementsByTagNameNS('http://www.jcp.org/jcr/sv/1.0', 'property') as $propertyNode) {
@@ -1282,7 +1290,7 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
         ];
 
         foreach ($doms as $targetDom => $properties) {
-            $dom = new DOMDocument('1.0', 'UTF-8');
+            $dom = $this->createDomDocument();
             $rootNode = $dom->createElement('sv:node');
             foreach ($namespaces as $namespace => $uri) {
                 $rootNode->setAttribute('xmlns:' . $namespace, $uri);
@@ -1794,7 +1802,7 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
         $query = 'SELECT props FROM phpcr_nodes WHERE id = ?';
         $xml = $this->getConnection()->fetchColumn($query, [$nodeId]);
 
-        $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom = $this->createDomDocument();
         $dom->loadXML($xml);
 
         $found = false;
@@ -1978,11 +1986,13 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
         $this->assertLoggedIn();
 
         $values[':absPath'] = $node->getPath();
-        $sql = "UPDATE phpcr_nodes SET sort_order = CASE CONCAT(
-          namespace,
-          (CASE namespace WHEN '' THEN '' ELSE ':' END),
-          local_name
-        )";
+        $concatExpression = $this->getConnection()->getDatabasePlatform()->getConcatExpression(
+            'namespace',
+            '(CASE namespace WHEN \'\' THEN \'\' ELSE \':\' END)',
+            'local_name'
+        );
+
+        $sql = "UPDATE phpcr_nodes SET sort_order = CASE " . $concatExpression;
 
         $i = 0;
 
@@ -2615,9 +2625,15 @@ phpcr_type_childs ON phpcr_type_nodes.node_type_id = phpcr_type_childs.node_type
         $params = [$targetId];
 
         $table = $weakReference ? $this->referenceTables[PropertyType::WEAKREFERENCE] : $this->referenceTables[PropertyType::REFERENCE];
-        $query = "SELECT CONCAT(n.path, '/', r.source_property_name) FROM phpcr_nodes n
+        $platform = $this->getConnection()->getDatabasePlatform();
+        $query = "SELECT " . $platform->getConcatExpression('n.path', '\'/\'', 'r.source_property_name') . " FROM phpcr_nodes n
                INNER JOIN $table r ON n.id = r.source_id
-               WHERE r.target_id = ?";
+               WHERE r.target_id = ?";       
+        
+        
+//        $query = "SELECT CONCAT(n.path, '/', r.source_property_name) FROM phpcr_nodes n
+//               INNER JOIN $table r ON n.id = r.source_id
+//               WHERE r.target_id = ?";
         if (null !== $name) {
             $query.= " AND source_property_name = ?";
             $params[] = $name;
@@ -2776,5 +2792,14 @@ phpcr_type_childs ON phpcr_type_nodes.node_type_id = phpcr_type_childs.node_type
         }
 
         $this->connectionInitialized = true;
+    }
+
+    private function createDomDocument()
+    {
+        if ($this->getConnection()->getDatabasePlatform() instanceof SQLServerPlatform) {
+            return new DOMDocument('1.0', 'UTF-16');
+        } else {
+            return new DOMDocument('1.0', 'UTF-8');
+        }
     }
 }

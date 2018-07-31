@@ -5,6 +5,7 @@ namespace Jackalope\Transport\DoctrineDBAL\Query;
 use BadMethodCallException;
 use DateTime;
 use DateTimeZone;
+use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Jackalope\NotImplementedException;
 use Jackalope\Query\QOM\PropertyValue;
@@ -419,8 +420,9 @@ class QOMWalker
     {
         $rightAlias = $this->getTableAlias($condition->getChildSelectorName());
         $leftAlias = $this->getTableAlias($condition->getParentSelectorName());
+        $concatExpression = $this->platform->getConcatExpression("$leftAlias.path", "'/%'");
 
-        return "($rightAlias.path LIKE CONCAT($leftAlias.path, '/%') AND $rightAlias.depth = $leftAlias.depth + 1) ";
+        return "($rightAlias.path LIKE ". $concatExpression ." AND $rightAlias.depth = $leftAlias.depth + 1) ";
     }
 
     /**
@@ -432,8 +434,9 @@ class QOMWalker
     {
         $rightAlias = $this->getTableAlias($condition->getDescendantSelectorName());
         $leftAlias = $this->getTableAlias($condition->getAncestorSelectorName());
+        $concatExpression = $this->platform->getConcatExpression("$leftAlias.path", "'/%'");
 
-        return "$rightAlias.path LIKE CONCAT($leftAlias.path, '/%') ";
+        return "$rightAlias.path LIKE ".CONCAT($leftAlias.path, '/%')." ";
     }
 
     /**
@@ -919,6 +922,15 @@ class QOMWalker
             return "EXTRACTVALUE($alias.$column, '//sv:property[@sv:name=\"" . $property . "\"]/sv:value[1]')";
         }
 
+        if ($this->platform instanceof SQLServerPlatform) {
+            return <<<EOT
+            $alias.$column.value(
+                        'declare namespace sv = "http://www.jcp.org/jcr/sv/1.0";
+                        (//sv:property[@sv:name="$property"]/sv:value/text())[1]', 'nvarchar(max)'
+                        )
+EOT;
+        }
+
         throw new NotImplementedException("Xpath evaluations cannot be executed with '" . $this->platform->getName() . "' yet.");
     }
 
@@ -942,7 +954,16 @@ class QOMWalker
         }
 
         if ($this->platform instanceof SqlitePlatform) {
-            return sprintf("EXTRACTVALUE(%s.props, '//sv:property[@sv:name=\"%s\"]/sv:value[%d]/@%s')", $alias, $property, $valueIndex, $attribute);
+            return sprintf("EXTRACTVALUE(%s.props, '//sv:property[@sv:name=\"%s\"]/sv:value[%d]/@%s')", $alias, $alias, $valueIndex, $attribute);
+        }
+
+        if ($this->platform instanceof SQLServerPlatform) {
+            return <<<EOT
+            $alias.props.value(
+                        'declare namespace sv = "http://www.jcp.org/jcr/sv/1.0";
+                        (//sv:property[@sv:name="$alias"]/sv:value)[$valueIndex]/@$attribute', 'nvarchar(max)'
+                        )
+EOT;
         }
 
         throw new NotImplementedException("Xpath evaluations cannot be executed with '" . $this->platform->getName() . "' yet.");
@@ -971,6 +992,13 @@ class QOMWalker
             $expression = "xpath_exists('//sv:property[@sv:name=\"" . $property . "\"]/sv:value[text()%s%s]', CAST($alias.props AS xml), ".$this->sqlXpathPostgreSQLNamespaces().") = 't'";
         } elseif ($this->platform instanceof SqlitePlatform) {
             $expression = "EXTRACTVALUE($alias.props, 'count(//sv:property[@sv:name=\"" . $property . "\"]/sv:value[text()%s%s]) > 0')";
+        } elseif ($this->platform instanceof SQLServerPlatform) {
+            $expression = <<<EOT
+            ($alias.props.value(
+                        'declare namespace sv = "http://www.jcp.org/jcr/sv/1.0";
+                        count(//sv:property[@sv:name="$property"]/sv:value[text()%s%s]) > 0', 'bit'
+                        ) = 1)
+EOT;
         } else {
             throw new NotImplementedException("Xpath evaluations cannot be executed with '" . $this->platform->getName() . "' yet.");
         }
