@@ -6,7 +6,6 @@ use ArrayObject;
 use Closure;
 use DateTime;
 use DateTimeZone;
-use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use DOMDocument;
 use DOMElement;
 use DOMXPath;
@@ -48,6 +47,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DBALException;
 use Doctrine\DBAL\Platforms\PostgreSqlPlatform;
 use Doctrine\DBAL\Platforms\SqlitePlatform;
+use Doctrine\DBAL\Platforms\SQLServerPlatform;
 use Jackalope\Node;
 use Jackalope\Property;
 use Jackalope\Query\Query;
@@ -2797,7 +2797,7 @@ phpcr_type_childs ON phpcr_type_nodes.node_type_id = phpcr_type_childs.node_type
     private function createDomDocument()
     {
         if ($this->getConnection()->getDatabasePlatform() instanceof SQLServerPlatform) {
-            return new DOMDocument('1.0', 'UTF-16');
+            return new DOMDocument('1.0');
         } else {
             return new DOMDocument('1.0', 'UTF-8');
         }
