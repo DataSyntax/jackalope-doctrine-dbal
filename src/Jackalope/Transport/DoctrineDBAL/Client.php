@@ -1926,6 +1926,9 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
             case 'mysql':
                 $intType = 'unsigned';
                 break;
+            case 'mssql':
+                $intType = 'int';
+                break;
             default:
                 $intType = 'integer';
         }
@@ -1947,7 +1950,14 @@ class Client extends BaseTransport implements QueryTransport, WritingInterface, 
                 $values[':localname' . $i] = PathHelper::getNodeName($values[':path' . $i]);
 
                 $updateLocalNameCase .= "WHEN id = :id$i THEN :localname$i ";
-                $updateSortOrderCase .= "WHEN id = :id$i THEN (SELECT * FROM ( SELECT MAX(x.sort_order) + 1 FROM phpcr_nodes x WHERE x.parent = :parent$i) y) ";
+
+                if ($this->getConnection()->getDatabasePlatform() instanceof SQLServerPlatform) {
+                    $updateSortOrderCase .= "WHEN id = :id$i THEN ( SELECT MAX(x.sort_order) + 1 FROM phpcr_nodes x WHERE x.parent = :parent$i) ";
+
+                } else {
+                    $updateSortOrderCase .= "WHEN id = :id$i THEN (SELECT * FROM ( SELECT MAX(x.sort_order) + 1 FROM phpcr_nodes x WHERE x.parent = :parent$i) y) ";
+
+                }
             }
 
             $ids[] = $row['id'];
